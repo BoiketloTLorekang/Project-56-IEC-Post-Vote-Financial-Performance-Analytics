@@ -1,0 +1,114 @@
+import sqlite3
+import numpy as np
+import pandas as pd
+
+np.random.seed(101)
+
+# Connect to existing project database or create new session
+conn = sqlite3.connect("iec_project_post_vote.db")
+
+# Load Project 1 Operational Master Data (50 Voting Stations Simulation)
+provinces = [
+    "Gauteng",
+    "KwaZulu-Natal",
+    "Western Cape",
+    "Eastern Cape",
+    "Free State",
+    "Limpopo",
+    "Mpumalanga",
+    "North West",
+]
+municipalities = [
+    "JHB - City of Johannesburg",
+    "TSH - City of Tshwane",
+    "EKU - Ekurhuleni",
+    "ETH - eThekwini",
+    "CPT - City of Cape Town",
+    "BUF - Buffalo City",
+    "MAN - Mangaung",
+    "LIM - Polokwane",
+]
+
+n_stations = 50
+df_ops = pd.DataFrame({
+    "Station_ID": [f"VD_{10000000 + i}" for i in range(n_stations)],
+    "Province": np.random.choice(provinces, n_stations),
+    "Municipality": np.random.choice(municipalities, n_stations),
+    "RegisteredVoters": np.random.randint(1200, 4800, n_stations),
+    "Total_Staff": np.random.randint(6, 12, n_stations),
+})
+
+# ---------------------------------------------------------------------------
+# STEP 1: Simulate Post-Vote Actual Execution Data
+# ---------------------------------------------------------------------------
+
+# 1. Base Allocated Budget (~R125 baseline cost per registered voter)
+df_ops["Budgeted_Spend_ZAR"] = (
+    df_ops["RegisteredVoters"] * 125.0
+).round(2)
+
+# 2. Actual Turnout Simulation (historically varies between 40% and 65%)
+df_ops["Turnout_Percentage"] = (
+    np.random.uniform(0.40, 0.68, n_stations)
+).round(4)
+df_ops["Actual_Votes_Cast"] = (
+    df_ops["RegisteredVoters"] * df_ops["Turnout_Percentage"]
+).astype(int)
+
+# 3. Financial Variance Simulation (Overtime, extended hours, emergency logistics)
+# Variance multiplier: Random noise between -5% (under budget) and +18% (overrun)
+variance_factor = np.random.uniform(0.95, 1.18, n_stations)
+df_ops["Actual_Spend_ZAR"] = (
+    df_ops["Budgeted_Spend_ZAR"] * variance_factor
+).round(2)
+
+# ---------------------------------------------------------------------------
+# STEP 2: Advanced Financial Variance Calculations
+# ---------------------------------------------------------------------------
+df_ops["Budget_Variance_ZAR"] = (
+    df_ops["Actual_Spend_ZAR"] - df_ops["Budgeted_Spend_ZAR"]
+).round(2)
+df_ops["Cost_Per_Registered_Voter"] = (
+    df_ops["Actual_Spend_ZAR"] / df_ops["RegisteredVoters"]
+).round(2)
+df_ops["Cost_Per_Realized_Vote"] = (
+    df_ops["Actual_Spend_ZAR"] / df_ops["Actual_Votes_Cast"]
+).round(2)
+df_ops["Financial_Efficiency_Status"] = np.where(
+    df_ops["Budget_Variance_ZAR"] > 0, "Over Budget", "Within Budget"
+)
+
+# Load into SQLite Engine
+df_ops.to_sql("post_vote_performance", conn, if_exists="replace", index=False)
+print(
+    f"Successfully compiled post-vote variance dataset for"
+    f" {len(df_ops)} stations."
+)
+
+# ---------------------------------------------------------------------------
+# STEP 3: Analytical SQL Variance Queries
+# ---------------------------------------------------------------------------
+
+# Query 1: Municipal Financial Variance & Turnout Impact
+query_financial_summary = """
+    SELECT 
+        Province,
+        COUNT(Station_ID) AS Total_Stations,
+        SUM(RegisteredVoters) AS Total_Registered,
+        SUM(Actual_Votes_Cast) AS Total_Votes_Cast,
+        ROUND(AVG(Turnout_Percentage) * 100, 2) AS Avg_Turnout_Pct,
+        SUM(Budgeted_Spend_ZAR) AS Total_Budget_ZAR,
+        SUM(Actual_Spend_ZAR) AS Total_Actual_Spend_ZAR,
+        SUM(Budget_Variance_ZAR) AS Variance_ZAR,
+        ROUND(AVG(Cost_Per_Realized_Vote), 2) AS Avg_Cost_Per_Realized_Vote
+    FROM post_vote_performance
+    GROUP BY Province
+    ORDER BY Total_Actual_Spend_ZAR DESC;
+"""
+
+df_financial_summary = pd.read_sql(query_financial_summary, conn)
+print("\n=== PROVINCIAL POST-VOTE FINANCIAL VARIANCE SUMMARY ===")
+print(df_financial_summary.to_string(index=False))
+
+# Close SQLite Connection
+conn.close()
